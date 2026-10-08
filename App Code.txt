@@ -1,0 +1,561 @@
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { Alert, FlatList, Image, Linking, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import { NavigationContainer } from '@react-navigation/native';
+import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
+
+const GROUP_CODE = 'MOB-G04-3813';
+const STALL_PATTERN = /^MS-[A-D]\d{2}-\d{3}$/;
+const PHONE_PATTERN = /^(\+250|0)7[2389]\d{7}$/;
+
+const colors = { primary: '#1B5E3A', bg: '#F4F6F3', card: '#FFFFFF', text: '#15201A', muted: '#55605A', border: '#CBD3CD', danger: '#B3261E', dangerBg: '#FDECEA', infoBg: '#E8F1EC' };
+const space = { xs: 4, sm: 8, md: 12, lg: 16, xl: 24 };
+const statusColors: any = {
+  Compliant: { bg: '#D7EFDD', fg: '#0F4D26' },
+  Pending: { bg: '#FFF0C7', fg: '#6B4A00' },
+  Flagged: { bg: '#FBD9D5', fg: '#8C1C13' },
+  Closed: { bg: '#E3E5E8', fg: '#33383F' },
+};
+const statusGlyph: any = { Compliant: '✔', Pending: '◐', Flagged: '⚑', Closed: '■' };
+const priorityColors: any = {
+  Low: { bg: '#DCEBFA', fg: '#0B3D6B' },
+  Medium: { bg: '#EAE0F7', fg: '#45257A' },
+  High: { bg: '#1B1B1B', fg: '#FFFFFF' },
+};
+
+const ZONES = [
+  { id: 'z1', name: 'Kinigi Fresh Produce Row', category: 'Produce', status: 'Compliant', priority: 'Low' },
+  { id: 'z2', name: 'Ruhengeri Fish & Meat Hall', category: 'Meat & Fish', status: 'Flagged', priority: 'High' },
+  { id: 'z3', name: 'Volcano Grains Corner', category: 'Grains', status: 'Pending', priority: 'Medium' },
+  { id: 'z4', name: 'Central Household Goods', category: 'Household', status: 'Compliant', priority: 'Low' },
+  { id: 'z5', name: 'Gisenyi Road Clothing Lane', category: 'Clothing', status: 'Closed', priority: 'Low' },
+  { id: 'z6', name: 'Night Market Food Stalls', category: 'Food Stall', status: 'Pending', priority: 'High' },
+];
+const CATEGORIES = ['Produce', 'Meat & Fish', 'Grains', 'Household', 'Clothing', 'Food Stall'];
+const RISKS = ['Low', 'Medium', 'High'];
+const FILTERS = ['All', 'Compliant', 'Pending', 'Flagged', 'Closed'];
+
+const emptyDraft: any = { alias: '', stallCode: '', category: null, phone: '', risk: null, consent: false, imageUri: null };
+const seed: any = {
+  id: 'seed-1', alias: 'Sample Vendor A', stallCode: 'MS-A01-001', category: 'Produce', phone: '0781234567',
+  risk: 'Low', consent: true, imageUri: null, timestamp: new Date().toISOString(), groupCode: GROUP_CODE,
+};
+
+function validate(d: any) {
+  const e: any = {};
+  const alias = d.alias.trim();
+  if (!alias) e.alias = 'Vendor alias is required.';
+  else if (alias.length < 3) e.alias = 'Alias must be at least 3 characters.';
+  const stall = d.stallCode.trim();
+  if (!stall) e.stallCode = 'Stall code is required.';
+  else if (!STALL_PATTERN.test(stall)) e.stallCode = 'Use the format MS-B07-023.';
+  if (!d.category) e.category = 'Select a category.';
+  const phone = d.phone.replace(/\s/g, '');
+  if (!phone) e.phone = 'Contact number is required.';
+  else if (!PHONE_PATTERN.test(phone)) e.phone = 'Use a Rwanda format such as 0781234567 or +250781234567.';
+  if (!d.risk) e.risk = 'Select a risk level.';
+  if (!d.consent) e.consent = 'Consent confirmation is required.';
+  return e;
+}
+
+const Ctx = createContext<any>(null);
+function SessionProvider({ children }: any) {
+  const [draft, setDraft] = useState<any>(emptyDraft);
+  const [records, setRecords] = useState<any[]>([seed]);
+  const [resetCount, setResetCount] = useState(0);
+  const setField = useCallback((k: string, v: any) => setDraft((d: any) => ({ ...d, [k]: v })), []);
+  const resetDraft = useCallback(() => {
+    setDraft(emptyDraft);
+    setResetCount((c) => c + 1);
+  }, []);
+  const addRecord = useCallback((r: any) => setRecords((p) => [r, ...p]), []);
+  const value = useMemo(
+    () => ({ draft, setField, resetDraft, records, addRecord, resetCount }),
+    [draft, setField, resetDraft, records, addRecord, resetCount]
+  );
+  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
+}
+const useSession = () => useContext(Ctx);
+
+function Chip({ label, bg, fg }: any) {
+  return (
+    <View style={[s.chip, { backgroundColor: bg }]}>
+      <Text style={[s.chipText, { color: fg }]}>{label}</Text>
+    </View>
+  );
+}
+
+function AppButton({ label, onPress, variant = 'primary', flex }: any) {
+  const outline = variant !== 'primary';
+  const color = variant === 'danger' ? colors.danger : colors.primary;
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      style={({ pressed }) => [
+        s.btn,
+        flex && s.btnFlex,
+        outline ? { borderColor: color, backgroundColor: colors.card } : { backgroundColor: colors.primary, borderColor: colors.primary },
+        pressed && { opacity: 0.8 },
+      ]}
+    >
+      <Text style={[s.btnText, { color: outline ? color : '#FFFFFF' }]}>{label}</Text>
+    </Pressable>
+  );
+}
+
+function EmptyState({ title, message }: any) {
+  return (
+    <View style={s.empty}>
+      <Text style={s.emptyIcon}>∅</Text>
+      <Text style={s.emptyTitle}>{title}</Text>
+      <Text style={s.emptyMsg}>{message}</Text>
+    </View>
+  );
+}
+
+function Field({ label, error, children }: any) {
+  return (
+    <View style={{ marginBottom: space.lg }}>
+      <Text style={s.label}>{label}</Text>
+      {children}
+      {error ? <Text style={s.error} accessibilityLiveRegion="polite">⚠ {error}</Text> : null}
+    </View>
+  );
+}
+
+function ChoiceRow({ options, value, onChange }: any) {
+  return (
+    <View style={s.choiceRow}>
+      {options.map((o: string) => {
+        const sel = o === value;
+        return (
+          <Pressable
+            key={o}
+            onPress={() => onChange(o)}
+            accessibilityRole="button"
+            accessibilityState={{ selected: sel }}
+            style={[s.choice, sel && s.choiceSel]}
+          >
+            <Text style={[s.choiceText, sel && { color: '#FFFFFF' }]}>{sel ? '✔ ' : ''}{o}</Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
+function ZoneCard({ zone }: any) {
+  const st = statusColors[zone.status];
+  const pr = priorityColors[zone.priority];
+  return (
+    <View style={s.card} accessible accessibilityLabel={`${zone.name}, ${zone.category}, status ${zone.status}, ${zone.priority} priority`}>
+      <View style={s.zoneImg}>
+        <Text style={s.zoneImgText}>{zone.name.charAt(0)}</Text>
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={s.cardName}>{zone.name}</Text>
+        <Text style={s.cardSub}>{zone.category}</Text>
+        <View style={s.chips}>
+          <Chip label={`${statusGlyph[zone.status]} ${zone.status}`} bg={st.bg} fg={st.fg} />
+          <Chip label={`Priority: ${zone.priority}`} bg={pr.bg} fg={pr.fg} />
+        </View>
+      </View>
+    </View>
+  );
+}
+
+function PhotoPicker({ uri, onChange }: any) {
+  const [notice, setNotice] = useState<any>(null);
+  const denied = (what: string, other: string) => {
+    setNotice({ error: true, text: `${what} permission was denied. Allow it in Settings, or ${other}.` });
+    Alert.alert(`${what} permission needed`, `Enable ${what.toLowerCase()} access in Settings, or ${other}.`, [
+      { text: 'Not now', style: 'cancel' },
+      { text: 'Open Settings', onPress: () => Linking.openSettings() },
+    ]);
+  };
+  const handle = (res: any) => {
+    if (res.canceled || !res.assets || res.assets.length === 0) {
+      setNotice({ error: false, text: uri ? 'Selection cancelled. Your current photo was kept.' : 'No photo selected. You can try again.' });
+      return;
+    }
+    onChange(res.assets[0].uri);
+    setNotice(null);
+  };
+  const capture = async () => {
+    const p = await ImagePicker.requestCameraPermissionsAsync();
+    if (!p.granted) return denied('Camera', 'choose a photo from the gallery');
+    handle(await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.6 }));
+  };
+  const pick = async () => {
+    const p = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!p.granted) return denied('Photo library', 'take a photo with the camera');
+    handle(await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.6 }));
+  };
+  return (
+    <View>
+      {uri ? (
+        <Image source={{ uri }} style={s.preview} accessibilityLabel="Selected evidence photo preview" />
+      ) : (
+        <View style={s.placeholder}>
+          <Text style={{ color: colors.muted, fontSize: 14 }}>No evidence photo yet</Text>
+        </View>
+      )}
+      <View style={s.rowWrap}>
+        <AppButton label={uri ? 'Retake with camera' : 'Take photo'} onPress={capture} flex />
+        <AppButton label={uri ? 'Replace from gallery' : 'Choose from gallery'} onPress={pick} variant="outline" flex />
+      </View>
+      {uri ? (
+        <View style={s.rowWrap}>
+          <AppButton label="Remove photo" onPress={() => { onChange(null); setNotice({ error: false, text: 'Photo removed.' }); }} variant="danger" flex />
+        </View>
+      ) : null}
+      {notice ? (
+        <Text style={[s.notice, notice.error ? { backgroundColor: colors.dangerBg, color: colors.danger } : { backgroundColor: colors.infoBg, color: colors.primary }]}>
+          {notice.text}
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
+function HomeScreen() {
+  const [query, setQuery] = useState('');
+  const [filter, setFilter] = useState('All');
+  const data = useMemo(
+    () => ZONES.filter((z) => (filter === 'All' || z.status === filter) && z.name.toLowerCase().includes(query.trim().toLowerCase())),
+    [query, filter]
+  );
+  const header = (
+    <View style={{ marginBottom: space.sm }}>
+      <Text style={s.h1}>Assigned market zones</Text>
+      <TextInput
+        value={query}
+        onChangeText={setQuery}
+        placeholder="Search zones"
+        placeholderTextColor={colors.muted}
+        style={[s.input, { marginBottom: space.md }]}
+        accessibilityLabel="Search zones"
+      />
+      <ChoiceRow options={FILTERS} value={filter} onChange={setFilter} />
+    </View>
+  );
+  return (
+    <FlatList
+      style={s.screen}
+      contentContainerStyle={{ padding: space.lg }}
+      data={data}
+      keyExtractor={(z) => z.id}
+      renderItem={({ item }) => <ZoneCard zone={item} />}
+      ListHeaderComponent={header}
+      ListEmptyComponent={<EmptyState title="No zones found" message="Try a different search or choose the All filter." />}
+      keyboardShouldPersistTaps="handled"
+    />
+  );
+}
+
+function FormScreen({ navigation }: any) {
+  const { draft, setField, resetCount } = useSession();
+  const [touched, setTouched] = useState<any>({});
+  const [attempted, setAttempted] = useState(false);
+
+  useEffect(() => {
+    setTouched({});
+    setAttempted(false);
+  }, [resetCount]);
+
+  const errors = validate(draft);
+  const show = (k: string) => (attempted || touched[k] ? errors[k] : undefined);
+  const touch = (k: string) => setTouched((t: any) => ({ ...t, [k]: true }));
+  const submit = () => {
+    setAttempted(true);
+    if (Object.keys(errors).length === 0) navigation.navigate('Review');
+  };
+  return (
+    <ScrollView style={s.screen} contentContainerStyle={{ padding: space.lg, paddingBottom: 48 }} keyboardShouldPersistTaps="handled">
+      <Text style={s.note}>Use fictional data only. Do not enter real names or phone numbers.</Text>
+
+      <Field label="Vendor alias" error={show('alias')}>
+        <TextInput
+          value={draft.alias}
+          onChangeText={(v) => setField('alias', v)}
+          onBlur={() => touch('alias')}
+          placeholder="e.g. Vendor Alpha"
+          placeholderTextColor={colors.muted}
+          style={[s.input, show('alias') && s.inputErr]}
+          accessibilityLabel="Vendor alias"
+        />
+      </Field>
+
+      <Field label="Stall code" error={show('stallCode')}>
+        <TextInput
+          value={draft.stallCode}
+          onChangeText={(v) => setField('stallCode', v.toUpperCase())}
+          onBlur={() => touch('stallCode')}
+          placeholder="MS-B07-023"
+          placeholderTextColor={colors.muted}
+          autoCapitalize="characters"
+          autoCorrect={false}
+          style={[s.input, show('stallCode') && s.inputErr]}
+          accessibilityLabel="Stall code"
+        />
+      </Field>
+
+      <Field label="Category" error={show('category')}>
+        <ChoiceRow options={CATEGORIES} value={draft.category} onChange={(v: string) => { setField('category', v); touch('category'); }} />
+      </Field>
+
+      <Field label="Contact number (fictional)" error={show('phone')}>
+        <TextInput
+          value={draft.phone}
+          onChangeText={(v) => setField('phone', v)}
+          onBlur={() => touch('phone')}
+          placeholder="0781234567"
+          placeholderTextColor={colors.muted}
+          keyboardType="phone-pad"
+          style={[s.input, show('phone') && s.inputErr]}
+          accessibilityLabel="Contact number"
+        />
+      </Field>
+
+      <Field label="Risk level" error={show('risk')}>
+        <ChoiceRow options={RISKS} value={draft.risk} onChange={(v: string) => { setField('risk', v); touch('risk'); }} />
+      </Field>
+
+      <Field label="Consent" error={show('consent')}>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <Switch
+            value={draft.consent}
+            onValueChange={(v) => { setField('consent', v); touch('consent'); }}
+            trackColor={{ true: colors.primary, false: colors.border }}
+            accessibilityLabel="Consent confirmation"
+          />
+          <Text style={{ flex: 1, marginLeft: space.md, fontSize: 14, color: colors.text }}>The vendor agreed to this fictional inspection record.</Text>
+        </View>
+      </Field>
+
+      <Field label="Evidence photo">
+        <PhotoPicker uri={draft.imageUri} onChange={(u: any) => setField('imageUri', u)} />
+      </Field>
+
+      <AppButton label="Review inspection" onPress={submit} />
+    </ScrollView>
+  );
+}
+
+function DetailRows({ rows }: any) {
+  return (
+    <View style={s.detailCard}>
+      {rows.map(([k, v]: any) => (
+        <View key={k} style={s.detailRow}>
+          <Text style={s.detailKey}>{k}</Text>
+          <Text style={s.detailVal}>{v}</Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+function ReviewScreen({ navigation }: any) {
+  const { draft, addRecord, resetDraft } = useSession();
+  const timestamp = useRef(new Date().toISOString()).current;
+  const rows = [
+    ['Group code', GROUP_CODE],
+    ['Vendor alias', draft.alias.trim()],
+    ['Stall code', draft.stallCode.trim()],
+    ['Category', draft.category ?? ''],
+    ['Contact number', draft.phone.replace(/\s/g, '')],
+    ['Risk level', draft.risk ?? ''],
+    ['Consent', draft.consent ? 'Confirmed' : 'Not confirmed'],
+    ['Timestamp', new Date(timestamp).toLocaleString('en-GB')],
+  ];
+  const save = () => {
+    if (Object.keys(validate(draft)).length > 0) return navigation.goBack();
+    addRecord({
+      id: `rec-${Date.now()}`, alias: draft.alias.trim(), stallCode: draft.stallCode.trim(), category: draft.category,
+      phone: draft.phone.replace(/\s/g, ''), risk: draft.risk, consent: draft.consent, imageUri: draft.imageUri,
+      timestamp, groupCode: GROUP_CODE,
+    });
+    resetDraft();
+    navigation.popToTop();
+    navigation.navigate('RecordsTab', { screen: 'Records' });
+    Alert.alert('Inspection saved', 'The record was added to this session.');
+  };
+  return (
+    <ScrollView style={s.screen} contentContainerStyle={{ padding: space.lg, paddingBottom: 48 }}>
+      <DetailRows rows={rows} />
+      {draft.imageUri ? (
+        <Image source={{ uri: draft.imageUri }} style={s.bigImg} accessibilityLabel="Evidence photo" />
+      ) : (
+        <Text style={s.noImg}>No evidence photo attached.</Text>
+      )}
+      <View style={s.rowWrap}>
+        <AppButton label="Back to edit" onPress={() => navigation.goBack()} variant="outline" flex />
+        <AppButton label="Save inspection" onPress={save} flex />
+      </View>
+    </ScrollView>
+  );
+}
+
+function RecordsScreen({ navigation }: any) {
+  const { records } = useSession();
+  return (
+    <FlatList
+      style={s.screen}
+      contentContainerStyle={{ padding: space.lg }}
+      data={records}
+      keyExtractor={(r) => r.id}
+      ListEmptyComponent={<EmptyState title="No records yet" message="Saved inspections appear here." />}
+      renderItem={({ item }) => {
+        const pr = priorityColors[item.risk];
+        return (
+          <Pressable
+            style={[s.card, { flexDirection: 'column', minHeight: 48 }]}
+            onPress={() => navigation.navigate('Details', { recordId: item.id })}
+            accessibilityRole="button"
+            accessibilityLabel={`${item.alias}, stall ${item.stallCode}, ${item.risk} risk. Open details`}
+          >
+            <Text style={s.cardName}>{item.alias}</Text>
+            <Text style={s.cardSub}>{item.stallCode} · {item.category}</Text>
+            <View style={s.chips}>
+              <Chip label={`Risk: ${item.risk}`} bg={pr.bg} fg={pr.fg} />
+            </View>
+          </Pressable>
+        );
+      }}
+    />
+  );
+}
+
+function DetailsScreen({ route }: any) {
+  const { records } = useSession();
+  const r = records.find((x: any) => x.id === route.params.recordId);
+  if (!r) return <EmptyState title="Record not found" message="Go back and choose another record." />;
+  const rows = [
+    ['Group code', r.groupCode],
+    ['Vendor alias', r.alias],
+    ['Stall code', r.stallCode],
+    ['Category', r.category],
+    ['Contact number', r.phone],
+    ['Risk level', r.risk],
+    ['Consent', r.consent ? 'Confirmed' : 'Not confirmed'],
+    ['Timestamp', new Date(r.timestamp).toLocaleString('en-GB')],
+  ];
+  return (
+    <ScrollView style={s.screen} contentContainerStyle={{ padding: space.lg, paddingBottom: 48 }}>
+      <DetailRows rows={rows} />
+      {r.imageUri ? (
+        <Image source={{ uri: r.imageUri }} style={s.bigImg} accessibilityLabel="Evidence photo" />
+      ) : (
+        <Text style={s.noImg}>No evidence photo attached.</Text>
+      )}
+    </ScrollView>
+  );
+}
+
+const Tabs = createBottomTabNavigator();
+const HomeStack = createNativeStackNavigator();
+const NewStack = createNativeStackNavigator();
+const RecordsStack = createNativeStackNavigator();
+
+const stackOptions: any = {
+  headerStyle: { backgroundColor: colors.primary },
+  headerTintColor: '#FFFFFF',
+  headerTitleAlign: 'left',
+  headerTitle: ({ children }: any) => (
+    <View>
+      <Text style={{ color: '#FFFFFF', fontSize: 17, fontWeight: '800' }}>{children}</Text>
+      <Text style={{ color: '#D7EFDD', fontSize: 12, fontWeight: '600' }}>{GROUP_CODE}</Text>
+    </View>
+  ),
+};
+
+function HomeStackScreen() {
+  return (
+    <HomeStack.Navigator screenOptions={stackOptions}>
+      <HomeStack.Screen name="Home" component={HomeScreen} options={{ title: 'Market Catalog' }} />
+    </HomeStack.Navigator>
+  );
+}
+function NewStackScreen() {
+  return (
+    <NewStack.Navigator screenOptions={stackOptions}>
+      <NewStack.Screen name="Form" component={FormScreen} options={{ title: 'New Inspection' }} />
+      <NewStack.Screen name="Review" component={ReviewScreen} options={{ title: 'Review' }} />
+    </NewStack.Navigator>
+  );
+}
+function RecordsStackScreen() {
+  return (
+    <RecordsStack.Navigator screenOptions={stackOptions}>
+      <RecordsStack.Screen name="Records" component={RecordsScreen} options={{ title: 'Records' }} />
+      <RecordsStack.Screen name="Details" component={DetailsScreen} options={{ title: 'Inspection Details' }} />
+    </RecordsStack.Navigator>
+  );
+}
+
+export default function App() {
+  return (
+    <SafeAreaProvider>
+      <SessionProvider>
+        <NavigationContainer>
+          <Tabs.Navigator
+            screenOptions={{
+              headerShown: false,
+              tabBarActiveTintColor: colors.primary,
+              tabBarInactiveTintColor: colors.muted,
+              tabBarLabelStyle: { fontSize: 12, fontWeight: '700' },
+            }}
+          >
+            <Tabs.Screen name="HomeTab" component={HomeStackScreen} options={{ title: 'Home', tabBarIcon: ({ color, size }) => <Ionicons name="home" size={size} color={color} /> }} />
+            <Tabs.Screen name="NewTab" component={NewStackScreen} options={{ title: 'New Inspection', tabBarIcon: ({ color, size }) => <Ionicons name="add-circle" size={size} color={color} /> }} />
+            <Tabs.Screen name="RecordsTab" component={RecordsStackScreen} options={{ title: 'Records', tabBarIcon: ({ color, size }) => <Ionicons name="list" size={size} color={color} /> }} />
+          </Tabs.Navigator>
+        </NavigationContainer>
+      </SessionProvider>
+    </SafeAreaProvider>
+  );
+}
+
+const s = StyleSheet.create({
+  screen: { flex: 1, backgroundColor: colors.bg },
+  h1: { fontSize: 20, fontWeight: '800', color: colors.text, marginBottom: space.md },
+  chip: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999, marginRight: 6, marginTop: 6 },
+  chipText: { fontSize: 12, fontWeight: '700' },
+  chips: { flexDirection: 'row', flexWrap: 'wrap' },
+  btn: { minHeight: 48, paddingHorizontal: 16, paddingVertical: 10, borderRadius: 12, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
+  btnFlex: { flexGrow: 1, flexBasis: 140, marginRight: 8, marginTop: 8 },
+  btnText: { fontSize: 15, fontWeight: '700', textAlign: 'center' },
+  empty: { alignItems: 'center', padding: space.xl },
+  emptyIcon: { fontSize: 40, color: colors.muted },
+  emptyTitle: { fontSize: 18, fontWeight: '700', color: colors.text, marginTop: space.sm, textAlign: 'center' },
+  emptyMsg: { fontSize: 14, color: colors.muted, marginTop: space.xs, textAlign: 'center' },
+  label: { fontSize: 14, fontWeight: '700', color: colors.text, marginBottom: 6 },
+  error: { color: colors.danger, fontSize: 13, marginTop: 6, fontWeight: '600' },
+  choiceRow: { flexDirection: 'row', flexWrap: 'wrap' },
+  choice: { minHeight: 44, paddingHorizontal: 14, justifyContent: 'center', borderRadius: 999, borderWidth: 1.5, borderColor: colors.border, backgroundColor: colors.card, marginRight: 8, marginBottom: 8 },
+  choiceSel: { backgroundColor: colors.primary, borderColor: colors.primary },
+  choiceText: { fontSize: 14, color: colors.text, fontWeight: '600' },
+  card: { flexDirection: 'row', backgroundColor: colors.card, borderRadius: 14, borderWidth: 1, borderColor: colors.border, padding: space.md, marginBottom: space.md },
+  cardName: { fontSize: 16, fontWeight: '700', color: colors.text },
+  cardSub: { fontSize: 14, color: colors.muted, marginTop: 2 },
+  zoneImg: { width: 56, height: 56, borderRadius: 12, backgroundColor: colors.infoBg, alignItems: 'center', justifyContent: 'center', marginRight: space.md },
+  zoneImgText: { fontSize: 24, fontWeight: '800', color: colors.primary },
+  input: { minHeight: 48, borderWidth: 1.5, borderColor: colors.border, borderRadius: 12, backgroundColor: colors.card, paddingHorizontal: space.md, fontSize: 16, color: colors.text },
+  inputErr: { borderColor: colors.danger },
+  note: { backgroundColor: colors.infoBg, color: colors.primary, padding: space.md, borderRadius: 10, marginBottom: space.lg, fontSize: 13, fontWeight: '600' },
+  preview: { width: '100%', aspectRatio: 4 / 3, borderRadius: 12, backgroundColor: colors.border },
+  placeholder: { width: '100%', minHeight: 140, borderRadius: 12, borderWidth: 2, borderStyle: 'dashed', borderColor: colors.border, alignItems: 'center', justifyContent: 'center', padding: space.lg },
+  rowWrap: { flexDirection: 'row', flexWrap: 'wrap' },
+  notice: { marginTop: space.md, padding: space.md, borderRadius: 10, fontSize: 13, fontWeight: '600' },
+  detailCard: { backgroundColor: colors.card, borderRadius: 14, borderWidth: 1, borderColor: colors.border, padding: space.md },
+  detailRow: { paddingVertical: space.sm, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
+  detailKey: { fontSize: 12, color: colors.muted, fontWeight: '700' },
+  detailVal: { fontSize: 16, color: colors.text, marginTop: 2 },
+  bigImg: { width: '100%', aspectRatio: 4 / 3, borderRadius: 12, marginTop: space.lg },
+  noImg: { marginTop: space.lg, color: colors.muted, fontSize: 14 },
+});
